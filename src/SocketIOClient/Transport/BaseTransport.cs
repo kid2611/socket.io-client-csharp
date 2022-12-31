@@ -5,7 +5,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using SocketIOClient.Extensions;
 using SocketIOClient.Messages;
-using SocketIOClient.UriConverters;
 
 namespace SocketIOClient.Transport
 {
@@ -16,6 +15,8 @@ namespace SocketIOClient.Transport
             Options = options ?? throw new ArgumentNullException(nameof(options));
             _messageQueue = new Queue<IMessage>();
         }
+
+        protected const string DirtyMessage = "Invalid object's current state, may need to create a new object.";
 
         DateTime _pingTime;
         readonly Queue<IMessage> _messageQueue;
@@ -132,13 +133,14 @@ namespace SocketIOClient.Transport
         protected async Task OnTextReceived(string text)
         {
 #if DEBUG
-            System.Diagnostics.Debug.WriteLine($"[{Protocol} Receive] {text}");
+            System.Diagnostics.Debug.WriteLine($"[{Protocol}⬇] {text}");
 #endif
             var msg = MessageFactory.CreateMessage(Options.EIO, text);
             if (msg == null)
             {
                 return;
             }
+            msg.Protocol = Protocol;
             if (msg.BinaryCount > 0)
             {
                 msg.IncomingBytes = new List<byte[]>(msg.BinaryCount);
@@ -202,7 +204,7 @@ namespace SocketIOClient.Transport
         protected void OnBinaryReceived(byte[] bytes)
         {
 #if DEBUG
-            System.Diagnostics.Debug.WriteLine($"[{Protocol} Receive] bytes");
+            System.Diagnostics.Debug.WriteLine($"[{Protocol}⬇]0️⃣1️⃣0️⃣1️⃣");
 #endif
             if (_messageQueue.Count > 0)
             {

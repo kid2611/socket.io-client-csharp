@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Net;
 using System.Text;
 using System.Threading;
@@ -51,33 +50,28 @@ namespace SocketIOClient.Transport.WebSockets
             }
         }
 
-        private void Listen()
+        private void Listen(CancellationToken cancellationToken)
         {
             Task.Factory.StartNew(async () =>
             {
-                while (true)
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    if (_listenCancellation.IsCancellationRequested)
-                    {
-                        break;
-                    }
                     var binary = new byte[_receiveChunkSize];
                     int count = 0;
                     WebSocketReceiveResult result = null;
 
                     while (_ws.State == WebSocketState.Open)
                     {
-                        var buffer = new byte[_receiveChunkSize];
                         try
                         {
-                            result = await _ws.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).ConfigureAwait(false);
+                            result = await _ws.ReceiveAsync(_receiveChunkSize, cancellationToken).ConfigureAwait(false);
 
                             // resize
                             if (binary.Length - count < result.Count)
                             {
                                 Array.Resize(ref binary, binary.Length + result.Count);
                             }
-                            Buffer.BlockCopy(buffer, 0, binary, count, result.Count);
+                            Buffer.BlockCopy(result.Buffer, 0, binary, count, result.Count);
                             count += result.Count;
                             if (result.EndOfMessage)
                             {
@@ -96,40 +90,56 @@ namespace SocketIOClient.Transport.WebSockets
                         break;
                     }
 
-                    switch (result.MessageType)
+                    try
                     {
-                        case TransportMessageType.Text:
-                            string text = Encoding.UTF8.GetString(binary, 0, count);
-                            OnTextReceived(text);
-                            break;
-                        case TransportMessageType.Binary:
-                            byte[] bytes;
-                            if (Options.EIO == EngineIO.V3)
-                            {
-                                bytes = new byte[count - 1];
-                                Buffer.BlockCopy(binary, 1, bytes, 0, bytes.Length);
-                            }
-                            else
-                            {
-                                bytes = new byte[count];
-                                Buffer.BlockCopy(binary, 0, bytes, 0, bytes.Length);
-                            }
-                            OnBinaryReceived(bytes);
-                            break;
-                        case TransportMessageType.Close:
-                            OnError.TryInvoke(new TransportException("Received a Close message"));
-                            break;
+                        switch (result.MessageType)
+                        {
+                            case TransportMessageType.Text:
+                                string text = Encoding.UTF8.GetString(binary, 0, count);
+                                await OnTextReceived(text);
+                                break;
+                            case TransportMessageType.Binary:
+                                byte[] bytes;
+                                if (Options.EIO == EngineIO.V3)
+                                {
+                                    bytes = new byte[count - 1];
+                                    Buffer.BlockCopy(binary, 1, bytes, 0, bytes.Length);
+                                }
+                                else
+                                {
+                                    bytes = new byte[count];
+                                    Buffer.BlockCopy(binary, 0, bytes, 0, bytes.Length);
+                                }
+                                OnBinaryReceived(bytes);
+                                break;
+                            case TransportMessageType.Close:
+                                OnError.TryInvoke(new TransportException("Received a Close message"));
+                                break;
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        OnError.TryInvoke(e);
+                        break;
                     }
                 }
-            });
+            }, cancellationToken);
         }
 
         public override async Task ConnectAsync(Uri uri, CancellationToken cancellationToken)
         {
-            if (_dirty) throw new ObjectNotCleanException();
+            if (_dirty)
+                throw new InvalidOperationException(DirtyMessage);
             _dirty = true;
-            await _ws.ConnectAsync(uri, cancellationToken).ConfigureAwait(false);
-            Listen();
+            try
+            {
+                await _ws.ConnectAsync(uri, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                throw new TransportException($"Could not connect to '{uri}'", e);
+            }
+            Listen(_listenCancellation.Token);
         }
 
         public override async Task DisconnectAsync(CancellationToken cancellationToken)
@@ -141,19 +151,22 @@ namespace SocketIOClient.Transport.WebSockets
         {
             try
             {
-                await _sendLock.WaitAsync().ConfigureAwait(false);
-                byte[] bytes = Encoding.UTF8.GetBytes(payload.Text);
-                await SendAsync(TransportMessageType.Text, bytes, cancellationToken);
+                await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(payload.Text))
+                {
+                    byte[] bytes = Encoding.UTF8.GetBytes(payload.Text);
+                    await SendAsync(TransportMessageType.Text, bytes, cancellationToken);
 #if DEBUG
-                System.Diagnostics.Debug.WriteLine($"[WebSocket Send] {payload.Text}");
+                    System.Diagnostics.Debug.WriteLine($"[WebSocket⬆] {payload.Text}");
 #endif
+                }
                 if (payload.Bytes != null)
                 {
                     foreach (var item in payload.Bytes)
                     {
                         await SendAsync(TransportMessageType.Binary, item, cancellationToken).ConfigureAwait(false);
 #if DEBUG
-                        System.Diagnostics.Debug.WriteLine($"[WebSocket Send] {Convert.ToBase64String(item)}");
+                        System.Diagnostics.Debug.WriteLine($"[WebSocket⬆] {Convert.ToBase64String(item)}");
 #endif
                     }
                 }

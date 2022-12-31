@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
@@ -15,12 +16,12 @@ namespace SocketIOClient.Transport.Http
             _pollingHandler = pollingHandler ?? throw new ArgumentNullException(nameof(pollingHandler));
             _pollingHandler.OnTextReceived = OnTextReceived;
             _pollingHandler.OnBytesReceived = OnBinaryReceived;
+            _sendLock = new SemaphoreSlim(1, 1);
         }
-
-        private const string DirtyMessage = "Invalid object's current state, may need to create a new object.";
 
         bool _dirty;
         string _httpUri;
+        readonly SemaphoreSlim _sendLock;
         CancellationTokenSource _pollingTokenSource;
 
         private readonly IHttpPollingHandler _pollingHandler;
@@ -59,7 +60,7 @@ namespace SocketIOClient.Transport.Http
         /// <exception cref="InvalidOperationException"></exception>
         public override async Task ConnectAsync(Uri uri, CancellationToken cancellationToken)
         {
-            if (_dirty) 
+            if (_dirty)
                 throw new InvalidOperationException(DirtyMessage);
             var req = new HttpRequestMessage(HttpMethod.Get, uri);
             _httpUri = uri.ToString();
@@ -74,8 +75,6 @@ namespace SocketIOClient.Transport.Http
             }
 
             _dirty = true;
-            // _pollingTokenSource = new CancellationTokenSource();
-            // StartPolling(_pollingTokenSource.Token);
         }
 
         public override Task DisconnectAsync(CancellationToken cancellationToken)
@@ -111,17 +110,27 @@ namespace SocketIOClient.Transport.Http
 
         public override async Task SendAsync(Payload payload, CancellationToken cancellationToken)
         {
-            // TODO: lock
-            await _pollingHandler.PostAsync(_httpUri, payload.Text, cancellationToken);
-#if DEBUG
-            System.Diagnostics.Debug.WriteLine($"[Http Send] {payload.Text}");
-#endif
-            if (payload.Bytes != null && payload.Bytes.Count > 0)
+            try
             {
-                await _pollingHandler.PostAsync(_httpUri, payload.Bytes, cancellationToken);
+                await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(payload.Text))
+                {
+                    await _pollingHandler.PostAsync(_httpUri, payload.Text, cancellationToken);
 #if DEBUG
-                System.Diagnostics.Debug.WriteLine($"[Http Send] bytes");
+                    Debug.WriteLine($"[Polling⬆] {payload.Text}");
 #endif
+                }
+                if (payload.Bytes != null && payload.Bytes.Count > 0)
+                {
+                    await _pollingHandler.PostAsync(_httpUri, payload.Bytes, cancellationToken);
+#if DEBUG
+                    Debug.WriteLine("[Polling⬆]0️⃣1️⃣0️⃣1️⃣");
+#endif
+                }
+            }
+            finally
+            {
+                _sendLock.Release();
             }
         }
 

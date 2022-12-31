@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace SocketIOClient.Messages
 {
-    public class EventMessage : IMessage
+    public class EventMessage : IJsonMessage
     {
         public MessageType Type => MessageType.EventMessage;
 

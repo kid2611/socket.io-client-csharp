@@ -11,36 +11,6 @@ namespace SocketIOClient.IntegrationTests
 {
     public abstract class SocketIOBaseTests
     {
-        protected readonly string V4_WS = Startup.Configuration["server:v4:ws"];
-        protected readonly string V4_NSP_WS = Startup.Configuration["server:v4:nsp_ws"];
-        protected readonly string V4_WS_TOKEN = Startup.Configuration["server:v4:ws_token"];
-        protected readonly string V4_NSP_WS_TOKEN = Startup.Configuration["server:v4:nsp_ws_token"];
-
-        protected readonly string V4_HTTP = Startup.Configuration["server:v4:http"];
-        protected readonly string V4_NSP_HTTP = Startup.Configuration["server:v4:nsp_http"];
-        protected readonly string V4_HTTP_TOKEN = Startup.Configuration["server:v4:http_token"];
-        protected readonly string V4_NSP_HTTP_TOKEN = Startup.Configuration["server:v4:nsp_http_token"];
-
-        protected readonly string V3_WS = Startup.Configuration["server:v3:ws"];
-        protected readonly string V3_NSP_WS = Startup.Configuration["server:v3:nsp_ws"];
-        protected readonly string V3_WS_TOKEN = Startup.Configuration["server:v3:ws_token"];
-        protected readonly string V3_NSP_WS_TOKEN = Startup.Configuration["server:v4:nsp_ws_token"];
-
-        protected readonly string V3_HTTP = Startup.Configuration["server:v3:http"];
-        protected readonly string V3_NSP_HTTP = Startup.Configuration["server:v3:nsp_ws"];
-        protected readonly string V3_HTTP_TOKEN = Startup.Configuration["server:v3:ws_token"];
-        protected readonly string V3_NSP_HTTP_TOKEN = Startup.Configuration["server:v3:nsp_ws_token"];
-
-        protected readonly string V2_WS = Startup.Configuration["server:v2:ws"];
-        protected readonly string V2_NSP_WS = Startup.Configuration["server:v2:nsp_ws"];
-        protected readonly string V2_WS_TOKEN = Startup.Configuration["server:v2:ws_token"];
-        protected readonly string V2_NSP_WS_TOKEN = Startup.Configuration["server:v2:nsp_ws_token"];
-
-        protected readonly string V2_HTTP = Startup.Configuration["server:v2:http"];
-        protected readonly string V2_NSP_HTTP = Startup.Configuration["server:v2:nsp_ws"];
-        protected readonly string V2_HTTP_TOKEN = Startup.Configuration["server:v2:ws_token"];
-        protected readonly string V2_NSP_HTTP_TOKEN = Startup.Configuration["server:v2:nsp_ws_token"];
-
         protected abstract string ServerUrl { get; }
         protected abstract string ServerTokenUrl { get; }
         protected abstract EngineIO EIO { get; }
@@ -400,30 +370,31 @@ namespace SocketIOClient.IntegrationTests
 
         #endregion
 
-        #region Header
-
         [TestMethod]
-        public async Task Should_Can_Get_Headers()
+        [DataRow("CustomHeader", "CustomHeader-Value")]
+        [DataRow("User-Agent", "dotnet-socketio[client]/socket")]
+        [DataRow("user-agent", "dotnet-socketio[client]/socket")]
+        public async Task ExtraHeaders(string key, string value)
         {
-            string response = null;
+            string actual = null;
             using var io = CreateSocketIO(new SocketIOOptions
             {
                 Reconnection = false,
                 EIO = EIO,
                 ExtraHeaders = new Dictionary<string, string>
                 {
-                    { "CustomHeader", "CustomHeader-Value" }
-                }
+                    { key, value },
+                },
             });
 
             await io.ConnectAsync();
-            await io.EmitAsync("get_headers", res => response = res.GetValue<string>());
+            await io.EmitAsync("get_header", 
+                res => actual = res.GetValue<string>(), 
+                key.ToLower());
             await Task.Delay(100);
 
-            response.Should().Be("CustomHeader-Value");
+            actual.Should().Be(value);
         }
-
-        #endregion
 
         #region OnAny OffAny Off
 
