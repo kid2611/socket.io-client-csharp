@@ -6,9 +6,13 @@ using System.Threading.Tasks;
 using SocketIOClient.Extensions;
 using SocketIOClient.Messages;
 
+#if DEBUG
+using System.Diagnostics;
+#endif
+
 namespace SocketIOClient.Transport
 {
-    public abstract class BaseTransport : IDisposable
+    public abstract class BaseTransport : ITransport
     {
         protected BaseTransport(TransportOptions options)
         {
@@ -43,6 +47,7 @@ namespace SocketIOClient.Transport
             {
                 payload.Bytes = msg.OutgoingBytes;
             }
+
             await SendAsync(payload, cancellationToken).ConfigureAwait(false);
         }
 
@@ -53,6 +58,7 @@ namespace SocketIOClient.Transport
             {
                 return;
             }
+
             var connectMsg = new ConnectedMessage
             {
                 Namespace = Namespace,
@@ -97,6 +103,7 @@ namespace SocketIOClient.Transport
                         {
                             await SendAsync(ping, cts.Token).ConfigureAwait(false);
                         }
+
                         // _logger.LogDebug($"[Ping] Has been sent");
                         _pingTime = DateTime.Now;
                         OnReceived.TryInvoke(ping);
@@ -121,7 +128,7 @@ namespace SocketIOClient.Transport
         public virtual void Dispose()
         {
             _messageQueue.Clear();
-            if (PingTokenSource != null)
+            if (PingTokenSource != null && !PingTokenSource.IsCancellationRequested)
             {
                 PingTokenSource.Cancel();
                 PingTokenSource.Dispose();
@@ -132,14 +139,16 @@ namespace SocketIOClient.Transport
 
         protected async Task OnTextReceived(string text)
         {
+            // TODO: refactor
 #if DEBUG
-            System.Diagnostics.Debug.WriteLine($"[{Protocol}⬇] {text}");
+            Debug.WriteLine($"[{Protocol}⬇] {text}");
 #endif
             var msg = MessageFactory.CreateMessage(Options.EIO, text);
             if (msg == null)
             {
                 return;
             }
+
             msg.Protocol = Protocol;
             if (msg.BinaryCount > 0)
             {
@@ -147,6 +156,7 @@ namespace SocketIOClient.Transport
                 _messageQueue.Enqueue(msg);
                 return;
             }
+
             if (msg.Type == MessageType.Opened)
             {
                 await OpenAsync(msg as OpenedMessage).ConfigureAwait(false);
@@ -156,14 +166,28 @@ namespace SocketIOClient.Transport
             {
                 if (msg.Type == MessageType.Connected)
                 {
+                    int ms = 0;
+                    while (OpenedMessage is null)
+                    {
+                        await Task.Delay(10);
+                        ms += 10;
+                        if (ms > Options.ConnectionTimeout.TotalMilliseconds)
+                        {
+                            OnError.TryInvoke(new TimeoutException());
+                            return;
+                        }
+                    }
+
                     var connectMsg = msg as ConnectedMessage;
                     connectMsg.Sid = OpenedMessage.Sid;
-                    if ((string.IsNullOrEmpty(Namespace) && string.IsNullOrEmpty(connectMsg.Namespace)) || connectMsg.Namespace == Namespace)
+                    if ((string.IsNullOrEmpty(Namespace) && string.IsNullOrEmpty(connectMsg.Namespace)) ||
+                        connectMsg.Namespace == Namespace)
                     {
                         if (PingTokenSource != null)
                         {
                             PingTokenSource.Cancel();
                         }
+
                         PingTokenSource = new CancellationTokenSource();
                         StartPing(PingTokenSource.Token);
                     }
@@ -204,7 +228,7 @@ namespace SocketIOClient.Transport
         protected void OnBinaryReceived(byte[] bytes)
         {
 #if DEBUG
-            System.Diagnostics.Debug.WriteLine($"[{Protocol}⬇]0️⃣1️⃣0️⃣1️⃣");
+            Debug.WriteLine($"[{Protocol}⬇]0️⃣1️⃣0️⃣1️⃣");
 #endif
             if (_messageQueue.Count > 0)
             {
